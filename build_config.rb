@@ -22,11 +22,11 @@ MRuby::Build.new do |conf|
   # conf.gem :git => 'git@github.com:masuidrive/mrbgems-example.git', :branch => 'master'
 end
 
-=begin
-MRuby::CrossBuild.new('i386') do |conf|
-  conf.cc = ENV['CC'] || 'gcc'
-  conf.ld = ENV['LD'] || 'gcc'
-  conf.ar = ENV['AR'] || 'ar'
+MRuby::CrossBuild.new('arm-cortex-m4') do |conf|
+  TOOLCHAIN_PREFIX = "arm-none-eabi-"
+  conf.cc = TOOLCHAIN_PREFIX + (ENV['CC'] || 'gcc')
+  conf.ld = TOOLCHAIN_PREFIX + (ENV['LD'] || 'gcc')
+  conf.ar = TOOLCHAIN_PREFIX + (ENV['AR'] || 'ar')
   # conf.cxx = 'gcc'
   # conf.objcc = 'gcc'
   # conf.asm = 'gcc'
@@ -35,13 +35,9 @@ MRuby::CrossBuild.new('i386') do |conf|
   # conf.cat = 'cat'
   # conf.git = 'git'
 
-  if ENV['OS'] == 'Windows_NT' # MinGW
-    conf.cflags = %w(-g -O3 -Wall -Werror-implicit-function-declaration -Di386_MARK)
-    conf.ldflags = %w(-s -static)
-  else
-    conf.cflags << %w(-g -O3 -Wall -Werror-implicit-function-declaration -arch i386)
-    conf.ldflags << %w(-arch i386)
-  end
+  conf.cflags << %w(-g -mlittle-endian -mthumb -mcpu=cortex-m4 -mthumb-interwork -mfloat-abi=hard -mfpu=fpv4-sp-d16)
+  #conf.ldflags = %w(-s -static)
+
   # conf.cxxflags << []
   # conf.objccflags << []
   # conf.asmflags << []
@@ -50,4 +46,3 @@ MRuby::CrossBuild.new('i386') do |conf|
   # conf.gem 'doc/mrbgems/c_extension_example'
   # conf.gem 'doc/mrbgems/c_and_ruby_extension_example'
 end
-=end
