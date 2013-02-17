@@ -145,7 +145,9 @@ gettimeofday_time(void)
 #define gc_assert(expect) ((void)0)
 #endif
 
+#ifndef GC_STEP_SIZE
 #define GC_STEP_SIZE 1024
+#endif
 
 void*
 mrb_realloc(mrb_state *mrb, void *p, size_t len)
