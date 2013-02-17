@@ -36,6 +36,10 @@ MRuby::CrossBuild.new('arm-cortex-m4') do |conf|
   # conf.git = 'git'
 
   conf.cflags << %w(-g -mlittle-endian -mthumb -mcpu=cortex-m4 -mthumb-interwork -mfloat-abi=hard -mfpu=fpv4-sp-d16)
+
+  macros = %w(MRB_HEAP_PAGE_SIZE=256 GC_STEP_SIZE=256)
+  conf.cflags << macros.map {|m| "-D\"#{m}\""}
+
   #conf.ldflags = %w(-s -static)
 
   # conf.cxxflags << []
