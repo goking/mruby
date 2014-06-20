@@ -1,5 +1,31 @@
 
-assert('<', '15.3.3.2.1') do
+assert('Comparable#<', '15.3.3.2.1') do
+  class Foo
+    include Comparable
+    def <=>(x)
+      x
+    end
+  end
+  assert_false(Foo.new < 0)
+  assert_false(Foo.new < 1)
+  assert_true(Foo.new < -1)
+  assert_raise(ArgumentError){ Foo.new < nil }
+end
+
+assert('Comparable#<=', '15.3.3.2.2') do
+  class Foo
+    include Comparable
+    def <=>(x)
+      x
+    end
+  end
+  assert_true(Foo.new <= 0)
+  assert_false(Foo.new <= 1)
+  assert_true(Foo.new <= -1)
+  assert_raise(ArgumentError){ Foo.new <= nil }
+end
+
+assert('Comparable#==', '15.3.3.2.3') do
   class Foo
     include Comparable
     def <=>(x)
@@ -7,50 +33,48 @@ assert('<', '15.3.3.2.1') do
     end
   end
 
-  (Foo.new < Foo.new) == false
+  assert_true(Foo.new == Foo.new)
 end
 
-assert('<=', '15.3.3.2.2') do
+assert('Comparable#>', '15.3.3.2.4') do
   class Foo
     include Comparable
     def <=>(x)
-      0
+      x
     end
   end
-
-  (Foo.new <= Foo.new) == true
+  assert_false(Foo.new > 0)
+  assert_true(Foo.new > 1)
+  assert_false(Foo.new > -1)
+  assert_raise(ArgumentError){ Foo.new > nil }
 end
 
-assert('==', '15.3.3.2.3') do
+assert('Comparable#>=', '15.3.3.2.5') do
   class Foo
     include Comparable
     def <=>(x)
-      0
+      x
     end
   end
-
-  (Foo.new == Foo.new) == true
+  assert_true(Foo.new >= 0)
+  assert_true(Foo.new >= 1)
+  assert_false(Foo.new >= -1)
+  assert_raise(ArgumentError){ Foo.new >= nil }
 end
 
-assert('>', '15.3.3.2.4') do
+assert('Comparable#between?', '15.3.3.2.6') do
   class Foo
     include Comparable
     def <=>(x)
-      0
+      x
     end
   end
 
-  (Foo.new > Foo.new) == false
+  c = Foo.new
+
+  assert_false(c.between?(-1,  1))
+  assert_false(c.between?(-1, -1))
+  assert_false(c.between?( 1,  1))
+  assert_true(c.between?( 1, -1))
+  assert_true(c.between?(0, 0))
 end
-
-assert('>=', '15.3.3.2.5') do
-  class Foo
-    include Comparable
-    def <=>(x)
-      0
-    end
-  end
-
-  (Foo.new >= Foo.new) == true
-end
-

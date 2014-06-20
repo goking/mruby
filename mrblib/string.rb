@@ -3,7 +3,7 @@
 #
 # ISO 15.2.10
 class String
-
+  include Comparable
   ##
   # Calls the given block for each line
   # and pass the respective line.
@@ -28,13 +28,12 @@ class String
   #
   # ISO 15.2.10.5.18
   def gsub(*args, &block)
-    unless (args.size == 1 && block) || args.size == 2
+    if args.size == 2
+      split(args[0], -1).join(args[1])
+    elsif args.size == 1 && block
+      split(args[0], -1).join(block.call(args[0]))
+    else
       raise ArgumentError, "wrong number of arguments"
-    end
-
-    ### *** TODO *** ###
-    unless Object.const_defined?(:Regexp)
-      raise NotImplementedError, "gsub not available (yet)"
     end
   end
 
@@ -76,13 +75,12 @@ class String
   #
   # ISO 15.2.10.5.36
   def sub(*args, &block)
-    unless (args.size == 1 && block) || args.size == 2
+    if args.size == 2
+      split(args[0], 2).join(args[1])
+    elsif args.size == 1 && block
+      split(args[0], 2).join(block.call(args[0]))
+    else
       raise ArgumentError, "wrong number of arguments"
-    end
-
-    ### *** TODO *** ###
-    unless Object.const_defined?(:Regexp)
-      raise NotImplementedError, "sub not available (yet)"
     end
   end
 
@@ -134,6 +132,21 @@ class String
     b = self[0, pos]
     a = self[pos+1..-1]
     self.replace([b, value, a].join(''))
+  end
+
+  ##
+  # ISO 15.2.10.5.3
+  def =~(re)
+    if re.respond_to? :to_str
+      raise TypeError, "type mismatch: String given"
+    end
+    re =~ self
+  end
+
+  ##
+  # ISO 15.2.10.5.27
+  def match(re, &block)
+    re.match(self, &block)
   end
 end
 

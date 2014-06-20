@@ -1,175 +1,257 @@
+load "#{MRUBY_ROOT}/tasks/mruby_build_gem.rake"
+load "#{MRUBY_ROOT}/tasks/mruby_build_commands.rake"
+
 module MRuby
   class << self
-    attr_accessor :build
-
     def targets
-      @targets ||= []
+      @targets ||= {}
     end
 
     def each_target(&block)
-      @targets.each do |target|
+      @targets.each do |key, target|
         target.instance_eval(&block)
       end
     end
   end
 
+  class Toolchain
+    class << self
+      attr_accessor :toolchains
+    end
+
+    def initialize(name, &block)
+      @name, @initializer = name.to_s, block
+      MRuby::Toolchain.toolchains ||= {}
+      MRuby::Toolchain.toolchains[@name] = self
+    end
+
+    def setup(conf)
+      conf.instance_eval(&@initializer)
+    end
+
+    def self.load
+      Dir.glob("#{MRUBY_ROOT}/tasks/toolchains/*.rake").each do |file|
+        Kernel.load file
+      end
+    end
+  end
+  Toolchain.load
+
   class Build
+    class << self
+      attr_accessor :current
+    end
     include Rake::DSL
-    attr_accessor :name
-    attr_accessor :cc, :cflags, :includes
-    attr_accessor :ld, :ldflags, :libs
-    attr_accessor :ar
-    attr_writer :cxx, :cxxflags
-    attr_writer :objcc, :objccflags
-    attr_writer :asm, :asmflags
-    attr_accessor :gperf, :yacc
-    attr_accessor :cat, :git
-    attr_reader :root, :gems
-    attr_reader :libmruby
+    include LoadGems
+    attr_accessor :name, :bins, :exts, :file_separator, :build_dir, :gem_clone_dir
+    attr_reader :libmruby, :gems
+    attr_writer :enable_bintest
 
-    def initialize(&block)
-      @name ||= 'host'
-      @root = File.expand_path("#{File.dirname(__FILE__)}/..")
-      @cc, @cflags, @includes = 'gcc', %W(-DDISABLE_GEMS -MMD), %W(#{@root}/include)
-      @ldflags, @libs = [], %w(-lm)
-      @ar = 'ar'
-      @cxxflags, @objccflags, @asmflags = [], [], []
+    COMPILERS = %w(cc cxx objc asm)
+    COMMANDS = COMPILERS + %w(linker archiver yacc gperf git exts mrbc)
+    attr_block MRuby::Build::COMMANDS
 
-      @yacc, @gperf = 'bison', 'gperf'
-      @cat, @git = 'cat', 'git'
+    Exts = Struct.new(:object, :executable, :library)
 
-      @gems, @libmruby = [], []
+    def initialize(name='host', build_dir=nil, &block)
+      @name = name.to_s
 
-      MRuby.targets << self
-      MRuby.build = self
-      instance_eval(&block)
-    end
+      unless MRuby.targets[@name]
+        if ENV['OS'] == 'Windows_NT'
+          @exts = Exts.new('.o', '.exe', '.a')
+        else
+          @exts = Exts.new('.o', '', '.a')
+        end
 
-    def cxx; @cxx || cc; end
-    def cxxflags; @cxxflags.empty? ? cflags : @cxxflags; end
+        build_dir = build_dir || ENV['MRUBY_BUILD_DIR'] || "#{MRUBY_ROOT}/build"
 
-    def objcc; @objcc || cc; end
-    def objccflags; @objccflags.empty? ? cflags : @objccflags; end
+        @file_separator = '/'
+        @build_dir = "#{build_dir}/#{@name}"
+        @gem_clone_dir = "#{build_dir}/mrbgems"
+        @cc = Command::Compiler.new(self, %w(.c))
+        @cxx = Command::Compiler.new(self, %w(.cc .cxx .cpp))
+        @objc = Command::Compiler.new(self, %w(.m))
+        @asm = Command::Compiler.new(self, %w(.S .asm))
+        @linker = Command::Linker.new(self)
+        @archiver = Command::Archiver.new(self)
+        @yacc = Command::Yacc.new(self)
+        @gperf = Command::Gperf.new(self)
+        @git = Command::Git.new(self)
+        @mrbc = Command::Mrbc.new(self)
 
-    def asm; @asm || cc; end
-    def asmflags; @asmflags.empty? ? cflags : @asmflags; end
+        @bins = %w(mrbc)
+        @gems, @libmruby = MRuby::Gem::List.new, []
+        @build_mrbtest_lib_only = false
+        @cxx_abi_enabled = false
+        @cxx_exception_disabled = false
 
-    def ld; @ld || cc; end
-
-    def gem(gemdir)
-      gemdir = load_external_gem(gemdir) if gemdir.is_a?(Hash)
-
-      [@cflags, @cxxflags, @objcflags, @asmflags].each do |f|
-        f.delete '-DDISABLE_GEMS' if f
+        MRuby.targets[@name] = self
       end
-      Gem::processing_path = gemdir
-      load File.join(gemdir, "mrbgem.rake")
+
+      MRuby::Build.current = MRuby.targets[@name]
+      MRuby.targets[@name].instance_eval(&block)
     end
 
-    def load_external_gem(params)
-      if params[:git]
-        url = params[:git]
-        gemdir = "build/mrbgems/#{url.match(/([-_\w]+)(\.[-_\w]+|)$/).to_a[1]}"
-        return gemdir if File.exists?(gemdir)
-        options = []
-        options << "--branch \"#{params[:branch]}\"" if params[:branch]
-        run_git_clone gemdir, url, options
-        gemdir
-      else
-        fail "unknown gem option #{params}"
-      end
+    def enable_debug
+      compilers.each { |c| c.defines += %w(MRB_DEBUG) }
+      @mrbc.compile_options += ' -g'
     end
 
-    def enable_gems?
-      !@gems.empty?
+    def disable_cxx_exception
+      @cxx_exception_disabled = true
     end
 
-    def gemlibs
-      enable_gems? ? ["#{build_dir}/mrbgems/gem_init.o"] + @gems.map{ |g| g.lib } : []
+    def cxx_abi_enabled?
+      @cxx_abi_enabled
     end
 
-    def build_dir
-      #@build_dir ||= "build/#{name}"
-      "build/#{self.name}"
+    def enable_cxx_abi
+      return if @cxx_exception_disabled or @cxx_abi_enabled
+      compilers.each { |c| c.defines += %w(MRB_ENABLE_CXX_EXCEPTION) }
+      linker.command = cxx.command
+      @cxx_abi_enabled = true
+    end
+
+    def enable_bintest
+      @enable_bintest = true
+    end
+
+    def bintest_enabled?
+      @enable_bintest
+    end
+
+    def toolchain(name)
+      tc = Toolchain.toolchains[name.to_s]
+      fail "Unknown #{name} toolchain" unless tc
+      tc.setup(self)
+    end
+
+    def root
+      MRUBY_ROOT
     end
 
     def mrbcfile
-      @mrbcfile ||= exefile("build/host/bin/mrbc")
+      MRuby.targets[@name].exefile("#{MRuby.targets[@name].build_dir}/bin/mrbc")
     end
 
-    def compile_c(outfile, infile, flags=[], includes=[])
-      FileUtils.mkdir_p File.dirname(outfile)
-      flags = [cflags, gems.map { |g| g.mruby_cflags }, flags]
-      flags << [self.includes, gems.map { |g| g.mruby_includes }, includes].flatten.map { |f| "-I#{filename f}" }
-      sh "#{filename cc} #{flags.flatten.join(' ')} -o #{filename outfile} -c #{filename infile}"
-    end
-    
-    def compile_cxx(outfile, infile, flags=[], includes=[])
-      FileUtils.mkdir_p File.dirname(outfile)
-      flags = [cxxflags, gems.map { |g| g.mruby_cflags }, flags]
-      flags << [self.includes, gems.map { |g| g.mruby_includes }, includes].flatten.map { |f| "-I#{filename f}" }
-      sh "#{filename cxx} #{flags.flatten.join(' ')} -o #{filename outfile} -c #{filename infile}"
-    end
-    
-    def compile_objc(outfile, infile, flags=[], includes=[])
-      FileUtils.mkdir_p File.dirname(outfile)
-      flags = [objcflags, gems.map { |g| g.mruby_cflags }, flags]
-      flags << [self.includes, gems.map { |g| g.mruby_includes }, includes].flatten.map { |f| "-I#{filename f}" }
-      sh "#{filename objcc} #{flags.flatten.join(' ')} -o #{filename outfile} -c #{filename infile}"
-    end
-    
-    def compile_asm(outfile, infile, flags=[], includes=[])
-      FileUtils.mkdir_p File.dirname(outfile)
-      flags = [asmflags, gems.map { |g| g.mruby_cflags }, flags]
-      flags << [self.includes, gems.map { |g| g.mruby_includes }, includes].flatten.map { |f| "-I#{filename f}" }
-      sh "#{filename asm} #{flags.flatten.join(' ')} -o #{filename outfile} -c #{filename infile}"
-    end
-    
-    def compile_mruby(outfile, infiles, funcname)
-      cmd = "#{cat} #{filenames [infiles]} | #{filename mrbcfile} -B#{funcname}"
-      if outfile.is_a?(IO)
-        IO.popen("#{cmd} -o- -", 'r') do |f|
-          outfile.puts f.read
-        end
-      else
-        FileUtils.mkdir_p File.dirname(outfile)
-        sh "#{cmd} -o#{filename outfile} -"
+    def compilers
+      COMPILERS.map do |c|
+        instance_variable_get("@#{c}")
       end
     end
-    
-    def link(outfile, objfiles, flags=[], libs=[])
-      FileUtils.mkdir_p File.dirname(outfile)
-      flags = [ldflags, flags]
-      libs = [libs, self.libs]
-      sh "#{filename ld} -o #{filename outfile} #{flags.join(' ')} #{filenames objfiles} #{libs.flatten.join(' ')}"
-    end
-    
-    def archive(outfile, options, objfiles)
-      FileUtils.mkdir_p File.dirname(outfile)
-      sh "#{filename ar} #{options} #{filename outfile} #{filenames objfiles}"
-    end
 
-    def run_yacc(outfile, infile)
-      FileUtils.mkdir_p File.dirname(outfile)
-      sh "#{filename yacc} -o #{filename outfile} #{filename infile}"
+    def define_rules
+      compilers.each do |compiler|
+        if respond_to?(:enable_gems?) && enable_gems?
+          compiler.defines -= %w(DISABLE_GEMS)
+        else
+          compiler.defines += %w(DISABLE_GEMS)
+        end
+        compiler.define_rules build_dir, File.expand_path(File.join(File.dirname(__FILE__), '..'))
+      end
     end
 
-    def run_gperf(outfile, infile)
-      FileUtils.mkdir_p File.dirname(outfile)
-      sh %Q[#{filename gperf} -L ANSI-C -C -p -j1 -i 1 -g -o -t -N mrb_reserved_word -k"1,3,$" #{filename infile} > #{filename outfile}]
+    def filename(name)
+      if name.is_a?(Array)
+        name.flatten.map { |n| filename(n) }
+      else
+        '"%s"' % name.gsub('/', file_separator)
+      end
     end
 
-    def run_git_clone(gemdir, giturl, options=[])
-      sh "#{filename git} clone #{options.join(' ')} #{filename giturl} #{filename gemdir}"
+    def cygwin_filename(name)
+      if name.is_a?(Array)
+        name.flatten.map { |n| cygwin_filename(n) }
+      else
+        '"%s"' % `cygpath -w "#{filename(name)}"`.strip
+      end
     end
 
+    def exefile(name)
+      if name.is_a?(Array)
+        name.flatten.map { |n| exefile(n) }
+      else
+        "#{name}#{exts.executable}"
+      end
+    end
 
+    def objfile(name)
+      if name.is_a?(Array)
+        name.flatten.map { |n| objfile(n) }
+      else
+        "#{name}#{exts.object}"
+      end
+    end
+
+    def libfile(name)
+      if name.is_a?(Array)
+        name.flatten.map { |n| libfile(n) }
+      else
+        "#{name}#{exts.library}"
+      end
+    end
+
+    def build_mrbtest_lib_only
+      @build_mrbtest_lib_only = true
+    end
+
+    def build_mrbtest_lib_only?
+      @build_mrbtest_lib_only
+    end
+
+    def run_test
+      puts ">>> Test #{name} <<<"
+      mrbtest = exefile("#{build_dir}/test/mrbtest")
+      sh "#{filename mrbtest.relative_path}#{$verbose ? ' -v' : ''}"
+      puts
+      run_bintest if @enable_bintest
+    end
+
+    def run_bintest
+      targets = @gems.select { |v| File.directory? "#{v.dir}/bintest" }.map { |v| filename v.dir }
+      targets << filename(".") if File.directory? "./bintest"
+      sh "ruby test/bintest.rb #{targets.join ' '}"
+    end
+
+    def print_build_summary
+      puts "================================================"
+      puts "      Config Name: #{@name}"
+      puts " Output Directory: #{self.build_dir.relative_path}"
+      puts "         Binaries: #{@bins.join(', ')}" unless @bins.empty?
+      unless @gems.empty?
+        puts "    Included Gems:"
+        @gems.map do |gem|
+          gem_version = " - #{gem.version}" if gem.version != '0.0.0'
+          gem_summary = " - #{gem.summary}" if gem.summary
+          puts "             #{gem.name}#{gem_version}#{gem_summary}"
+          puts "               - Binaries: #{gem.bins.join(', ')}" unless gem.bins.empty?
+        end
+      end
+      puts "================================================"
+      puts
+    end
   end # Build
 
   class CrossBuild < Build
-    def initialize(name, &block)
-      @name ||= name
-      super(&block)
+    attr_block %w(test_runner)
+
+    def initialize(name, build_dir=nil, &block)
+      @test_runner = Command::CrossTestRunner.new(self)
+      super
+    end
+
+    def mrbcfile
+      MRuby.targets['host'].exefile("#{MRuby.targets['host'].build_dir}/bin/mrbc")
+    end
+
+    def run_test
+      mrbtest = exefile("#{build_dir}/test/mrbtest")
+      if (@test_runner.command == nil)
+        puts "You should run #{mrbtest} on target device."
+        puts
+      else
+        @test_runner.run(mrbtest)
+      end
     end
   end # CrossBuild
 end # MRuby
