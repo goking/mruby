@@ -98,27 +98,22 @@ end
 #
 # end
 
+MRuby::Toolchain.new(:arm_none_eabi_gcc) do |conf|
+  prefix = "arm-none-eabi-"
+  toolchain :gcc
+  [conf.cc, conf.linker].each do |cc|
+    cc.command = prefix + (ENV['CC'] || 'gcc')
+  end
+  conf.archiver.command = prefix + (ENV['AR'] || 'ar')
+end
+
 MRuby::CrossBuild.new('arm-cortex-m4') do |conf|
-  TOOLCHAIN_PREFIX = "arm-none-eabi-"
-  conf.cc = TOOLCHAIN_PREFIX + (ENV['CC'] || 'gcc')
-  conf.ld = TOOLCHAIN_PREFIX + (ENV['LD'] || 'gcc')
-  conf.ar = TOOLCHAIN_PREFIX + (ENV['AR'] || 'ar')
-  # conf.cxx = 'gcc'
-  # conf.objcc = 'gcc'
-  # conf.asm = 'gcc'
-  # conf.yacc = 'bison'
-  # conf.gperf = 'gperf'
-  # conf.cat = 'cat'
-  # conf.git = 'git'
+  toolchain :arm_none_eabi_gcc
 
-  conf.cflags << %w(-g -mlittle-endian -mthumb -mcpu=cortex-m4 -mthumb-interwork -mfloat-abi=hard -mfpu=fpv4-sp-d16)
+  conf.cc.flags << %w(-g -mlittle-endian -mthumb -mcpu=cortex-m4 -mthumb-interwork -mfloat-abi=hard -mfpu=fpv4-sp-d16)
 
-  macros = %w(MRB_HEAP_PAGE_SIZE=256 GC_STEP_SIZE=256)
-  conf.cflags << macros.map {|m| "-D\"#{m}\""}
+  #macros = %w(MRB_HEAP_PAGE_SIZE=256 GC_STEP_SIZE=256)
+  #conf.cc.flags << macros.map {|m| "-D\"#{m}\""}
 
-  #conf.ldflags = %w(-s -static)
-
-  # conf.cxxflags << []
-  # conf.objccflags << []
-  # conf.asmflags << []
+  conf.bins = []
 end
